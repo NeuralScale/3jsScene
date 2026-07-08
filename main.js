@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { vertexCommon, vertexBegin } from './shaders/common.glsl.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { createFluffyGrassMaterial } from './shaders/grassMaterial.js';
+import { vertexCommon, vertexBegin, noiseGLSL, pondDepth } from './shaders/common.glsl.js';
 import { groundFragmentCommon, groundFragmentColor } from './shaders/ground.glsl.js';
 import { ripplesFragmentCommon, ripplesFragmentColor } from './shaders/ripples.glsl.js';
 
@@ -8,27 +10,23 @@ import { ripplesFragmentCommon, ripplesFragmentColor } from './shaders/ripples.g
 const PALETTES = {
   night: {
     fog: new THREE.Color(0.012, 0.02, 0.055),
-    ground: new THREE.Color(0.05, 0.1, 0.04),
+    ground: new THREE.Color(0x05a3af),
     shallow: new THREE.Color(0.05, 0.22, 0.2),
     deep: new THREE.Color(0.02, 0.12, 0.16),
     keyColor: new THREE.Color(0xbfd4ff),
     keyIntensity: 0.8,
     ambientColor: new THREE.Color(0x8899cc),
     ambientIntensity: 0.25,
-    cloudColor: new THREE.Color(0x2a3350),
-    cloudOpacity: 0.7,
   },
   day: {
     fog: new THREE.Color(0.196, 0.51, 0.804),
-    ground: new THREE.Color(0.24, 0.42, 0.1),
+    ground: new THREE.Color(0x05a3af),
     shallow: new THREE.Color(0.15, 0.65, 0.55),
     deep: new THREE.Color(0.06, 0.5, 0.51),
     keyColor: new THREE.Color(0xfff4e6),
     keyIntensity: 2.0,
     ambientColor: new THREE.Color(0xfff8f0),
     ambientIntensity: 0.4,
-    cloudColor: new THREE.Color(0xffffff),
-    cloudOpacity: 0.9,
   },
 };
 
@@ -38,7 +36,7 @@ const GROUND_COLOR = PALETTES.night.ground.clone();
 const WATER_SHALLOW = PALETTES.night.shallow.clone();
 const WATER_DEEP = PALETTES.night.deep.clone();
 
-const PLANE_SIZE = 55;
+const PLANE_SIZE = 13;
 const POND_CENTER = new THREE.Vector2(0.0, 0.0); // world xz
 const POND_RADIUS = 5;
 
@@ -61,10 +59,32 @@ document.body.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.enablePan = false;
-controls.minDistance = 5;
-controls.maxDistance = 35;
 controls.maxPolarAngle = Math.PI / 2.2;
-controls.minPolarAngle = Math.PI / 4;
+controls.minPolarAngle = 0; // allow a straight top-down view
+
+// OrbitControls zoom is instant; replace it with an eased dolly
+controls.enableZoom = false;
+let zoomTargetDistance = camera.position.distanceTo(controls.target);
+renderer.domElement.addEventListener(
+  'wheel',
+  (event) => {
+    event.preventDefault();
+    // Same 5-35 range OrbitControls' min/maxDistance used to enforce
+    zoomTargetDistance = THREE.MathUtils.clamp(
+      zoomTargetDistance * Math.pow(1.28, event.deltaY / 100),
+      5,
+      35
+    );
+  },
+  { passive: false }
+);
+
+const zoomOffset = new THREE.Vector3();
+function updateZoomDamping() {
+  zoomOffset.copy(camera.position).sub(controls.target);
+  const eased = THREE.MathUtils.lerp(zoomOffset.length(), zoomTargetDistance, 0.07);
+  camera.position.copy(controls.target).addScaledVector(zoomOffset.normalize(), eased);
+}
 
 // Key + ambient lights; color and intensity are driven by time of day
 const keyLight = new THREE.DirectionalLight(0xbfd4ff, 0.8);
@@ -76,13 +96,17 @@ scene.add(ambientLight);
 // --- Ground: pond painted into a MeshStandardMaterial ---
 const groundUniforms = {
   uGroundColor: { value: GROUND_COLOR },
+  uSoilColor: { value: new THREE.Color(0x9a7d9f) },
   uWaterShallow: { value: WATER_SHALLOW },
   uWaterDeep: { value: WATER_DEEP },
   uPondCenter: { value: POND_CENTER },
   uPondRadius: { value: POND_RADIUS },
 };
 
-const groundMaterial = new THREE.MeshStandardMaterial({ roughness: 1.0 });
+const groundMaterial = new THREE.MeshStandardMaterial({
+  roughness: 1.0,
+  side: THREE.DoubleSide,
+});
 groundMaterial.onBeforeCompile = (shader) => {
   Object.assign(shader.uniforms, groundUniforms);
   shader.vertexShader = shader.vertexShader
@@ -94,17 +118,32 @@ groundMaterial.onBeforeCompile = (shader) => {
 };
 
 const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE),
+  new THREE.CircleGeometry(PLANE_SIZE / 2, 64),
   groundMaterial
 );
 ground.rotateX(-Math.PI / 2);
 scene.add(ground);
 
-const grid = new THREE.GridHelper(PLANE_SIZE, PLANE_SIZE, 0xffffff, 0xffffff);
-grid.material.transparent = true;
-grid.material.opacity = 0.07;
-grid.position.y = 0.02;
-scene.add(grid);
+// Short cylinder slab under the ground disc — small floating island look
+const islandMaterial = new THREE.MeshStandardMaterial({ color: 0x5c4a5e, roughness: 1.0 });
+islandMaterial.onBeforeCompile = (shader) => {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', vertexCommon)
+    .replace('#include <begin_vertex>', vertexBegin);
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', `#include <common>\n${noiseGLSL}`)
+    .replace('#include <color_fragment>', `#include <color_fragment>
+  // Soil mottling: coarse clumps + fine grit, varying down the side too
+  float soilGrain = vnoise(vWorldPos.xz * 6.0 + vWorldPos.y * 4.0) * 0.6
+    + vnoise(vWorldPos.xz * 20.0 + vWorldPos.y * 14.0) * 0.4;
+  diffuseColor.rgb *= 0.8 + soilGrain * 0.38;`);
+};
+const islandBase = new THREE.Mesh(
+  new THREE.CylinderGeometry(PLANE_SIZE / 2, PLANE_SIZE / 2, 0.12, 64),
+  islandMaterial
+);
+islandBase.position.y = -0.07; // top cap just below the ground disc, avoids z-fighting
+scene.add(islandBase);
 
 // --- Ripples: animated rings floating just above the pond ---
 const MAX_DROPS = 8;
@@ -121,6 +160,7 @@ const ripplesUniforms = {
 const ripplesMaterial = new THREE.MeshStandardMaterial({
   color: 'black',
   transparent: true,
+  side: THREE.DoubleSide,
 });
 ripplesMaterial.onBeforeCompile = (shader) => {
   Object.assign(shader.uniforms, ripplesUniforms);
@@ -140,45 +180,46 @@ ripples.rotateX(-Math.PI / 2);
 ripples.position.set(POND_CENTER.x, 0.05, POND_CENTER.y);
 scene.add(ripples);
 
-// --- Rocks & pebbles around the pond ---
-const rockMaterial = new THREE.MeshStandardMaterial({
-  color: 0x4a4e57,
-  roughness: 0.95,
-  flatShading: true,
-});
-const pebbleMaterial = new THREE.MeshStandardMaterial({
-  color: 0x6b6f77,
-  roughness: 0.9,
-  flatShading: true,
+// --- Fluffy grass: instanced alpha-cutout tufts (thebenezer/FluffyGrass) ---
+const textureLoader = new THREE.TextureLoader();
+const grassAlphaTexture = textureLoader.load('./textures/grass.jpeg');
+const perlinTexture = textureLoader.load('./textures/perlinnoise.webp');
+perlinTexture.wrapS = perlinTexture.wrapT = THREE.RepeatWrapping;
+
+// Each tuft is three crossed quads, pivot at the base
+const tuftPlane = new THREE.PlaneGeometry(0.55, 0.5);
+tuftPlane.translate(0, 0.25, 0);
+const tuftGeometry = mergeGeometries([
+  tuftPlane,
+  tuftPlane.clone().rotateY(Math.PI / 3),
+  tuftPlane.clone().rotateY((Math.PI * 2) / 3),
+]);
+
+const { material: grassMaterial, uniforms: grassUniforms } = createFluffyGrassMaterial({
+  alphaTexture: grassAlphaTexture,
+  noiseTexture: perlinTexture,
+  terrainSize: PLANE_SIZE,
 });
 
-function placeAroundPond(minOffset, maxOffset) {
+const GRASS_COUNT = 1500;
+const grass = new THREE.InstancedMesh(tuftGeometry, grassMaterial, GRASS_COUNT);
+const tuftDummy = new THREE.Object3D();
+let tuftsPlaced = 0;
+while (tuftsPlaced < GRASS_COUNT) {
   const angle = Math.random() * Math.PI * 2;
-  const r = POND_RADIUS + minOffset + Math.random() * (maxOffset - minOffset);
+  const r = Math.sqrt(Math.random()) * (PLANE_SIZE / 2 - 0.3);
   const x = POND_CENTER.x + Math.cos(angle) * r;
   const z = POND_CENTER.y + Math.sin(angle) * r;
-  return new THREE.Vector3(x, 0, z);
+  // Reject spots on the water or the soil ring
+  if (pondDepth(x, z, POND_CENTER, POND_RADIUS) > 0.045) continue;
+  tuftDummy.position.set(x, 0, z);
+  tuftDummy.rotation.y = Math.random() * Math.PI;
+  tuftDummy.scale.setScalar(0.7 + Math.random() * 0.7);
+  tuftDummy.updateMatrix();
+  grass.setMatrixAt(tuftsPlaced, tuftDummy.matrix);
+  tuftsPlaced++;
 }
-
-for (let i = 0; i < 6; i++) {
-  const size = 0.35 + Math.random() * 0.6;
-  const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(size, 0), rockMaterial);
-  rock.position.copy(placeAroundPond(0.4, 2.5));
-  rock.position.y += size * 0.3; // sink slightly into the ground
-  rock.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-  rock.scale.y = 0.6 + Math.random() * 0.4;
-  scene.add(rock);
-}
-
-for (let i = 0; i < 18; i++) {
-  const size = 0.06 + Math.random() * 0.12;
-  const pebble = new THREE.Mesh(new THREE.DodecahedronGeometry(size, 0), pebbleMaterial);
-  pebble.position.copy(placeAroundPond(0.1, 1.8));
-  pebble.position.y += size * 0.4;
-  pebble.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-  pebble.scale.y = 0.6;
-  scene.add(pebble);
-}
+scene.add(grass);
 
 // --- Fireflies: glowing points bobbing around the pond ---
 const FIREFLY_COUNT = 30;
@@ -230,48 +271,26 @@ function updateFireflies(t) {
   pos.needsUpdate = true;
 }
 
-// --- Sky deco: drifting night clouds ---
-const cloudMaterial = new THREE.MeshBasicMaterial({
-  color: 0x2a3350,
-  fog: false,
-  transparent: true,
-  opacity: 0.7,
-});
-
-function makeCloud() {
-  const cloud = new THREE.Group();
-  const puffs = 4 + Math.floor(Math.random() * 3);
-  for (let i = 0; i < puffs; i++) {
-    const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(1.5 + Math.random() * 1.5, 10, 10),
-      cloudMaterial
-    );
-    puff.position.set(i * 2 - puffs, Math.random() * 0.8, (Math.random() - 0.5) * 2);
-    puff.scale.y = 0.55;
-    cloud.add(puff);
-  }
-  return cloud;
-}
-
-const clouds = [];
-for (let i = 0; i < 6; i++) {
-  const cloud = makeCloud();
-  cloud.position.set(
-    -80 + Math.random() * 160,
-    28 + Math.random() * 14,
-    -90 + Math.random() * 60
-  );
-  scene.add(cloud);
-  clouds.push(cloud);
-}
-
 // --- Click to spawn a ripple (raycast the pond, addDrop-style) ---
 const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let nextDrop = 0;
 
-window.addEventListener('pointerdown', (event) => {
+// Hovering over the ground bends nearby grass away from the pointer.
+// The shader uniform eases toward this target in the render loop.
+const grassPointerTarget = grassUniforms.uPointer.value.clone();
+renderer.domElement.addEventListener('pointermove', (event) => {
+  pointer.set(
+    (event.clientX / window.innerWidth) * 2 - 1,
+    -(event.clientY / window.innerHeight) * 2 + 1
+  );
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObject(ground)[0];
+  if (hit) grassPointerTarget.copy(hit.point);
+});
+
+renderer.domElement.addEventListener('pointerdown', (event) => {
   pointer.set(
     (event.clientX / window.innerWidth) * 2 - 1,
     -(event.clientY / window.innerHeight) * 2 + 1
@@ -289,12 +308,16 @@ window.addEventListener('pointerdown', (event) => {
   nextDrop = (nextDrop + 1) % MAX_DROPS;
 });
 
-// --- Real-time clock + day/night cycle ---
+// --- Clock + day/night cycle: follows real time, or a slider-scrubbed time ---
 const clockElement = document.getElementById('clock');
+const timeSlider = document.getElementById('time-slider');
+const liveButton = document.getElementById('live-button');
+
+// null = follow the real clock; otherwise minutes since midnight from the slider
+let manualMinutes = null;
 
 // 1 = full day, 0 = full night, smooth ramps at dawn (6-8h) and dusk (18-20h)
-function daylightFactor(date) {
-  const hour = date.getHours() + date.getMinutes() / 60;
+function daylightFactor(hour) {
   if (hour < 6 || hour >= 20) return 0;
   if (hour < 8) return (hour - 6) / 2;
   if (hour < 18) return 1;
@@ -303,13 +326,25 @@ function daylightFactor(date) {
 
 function applyTimeOfDay() {
   const now = new Date();
-  clockElement.textContent = now.toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  let minutes;
+  if (manualMinutes === null) {
+    minutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+    timeSlider.value = Math.round(minutes);
+    clockElement.textContent = now.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  } else {
+    minutes = manualMinutes;
+    now.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+    clockElement.textContent = now.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
 
-  const t = daylightFactor(now);
+  const t = daylightFactor(minutes / 60);
   const n = PALETTES.night;
   const d = PALETTES.day;
 
@@ -317,7 +352,7 @@ function applyTimeOfDay() {
   GROUND_COLOR.copy(n.ground).lerp(d.ground, t);
   WATER_SHALLOW.copy(n.shallow).lerp(d.shallow, t);
   WATER_DEEP.copy(n.deep).lerp(d.deep, t);
-  scene.fog.color.copy(FOG_COLOR);
+  if (scene.fog) scene.fog.color.copy(FOG_COLOR);
   scene.background.copy(FOG_COLOR);
 
   keyLight.color.copy(n.keyColor).lerp(d.keyColor, t);
@@ -325,15 +360,35 @@ function applyTimeOfDay() {
   ambientLight.color.copy(n.ambientColor).lerp(d.ambientColor, t);
   ambientLight.intensity = THREE.MathUtils.lerp(n.ambientIntensity, d.ambientIntensity, t);
 
-  cloudMaterial.color.copy(n.cloudColor).lerp(d.cloudColor, t);
-  cloudMaterial.opacity = THREE.MathUtils.lerp(n.cloudOpacity, d.cloudOpacity, t);
+  grassUniforms.uDayFactor.value = t;
 
   // Fireflies only come out at night
   fireflies.material.opacity = 1 - t;
   fireflies.visible = t < 1;
 }
 
+function updatePanelState() {
+  liveButton.classList.toggle('active', manualMinutes === null);
+}
+
+// Grabbing the slider freezes the scene at that time; the live button resumes
+timeSlider.addEventListener('pointerdown', () => {
+  manualMinutes = Number(timeSlider.value);
+  updatePanelState();
+});
+timeSlider.addEventListener('input', () => {
+  manualMinutes = Number(timeSlider.value);
+  updatePanelState();
+  applyTimeOfDay();
+});
+liveButton.addEventListener('click', () => {
+  manualMinutes = null;
+  updatePanelState();
+  applyTimeOfDay();
+});
+
 applyTimeOfDay();
+updatePanelState();
 setInterval(applyTimeOfDay, 1000);
 
 window.addEventListener('resize', () => {
@@ -345,11 +400,10 @@ window.addEventListener('resize', () => {
 renderer.setAnimationLoop(() => {
   ripplesUniforms.uTime.value += 0.00015;
   ripplesUniforms.uClock.value = clock.getElapsedTime();
+  grassUniforms.uTime.value = clock.getElapsedTime();
+  grassUniforms.uPointer.value.lerp(grassPointerTarget, 0.06);
   updateFireflies(clock.getElapsedTime());
-  for (const cloud of clouds) {
-    cloud.position.x += 0.015;
-    if (cloud.position.x > 90) cloud.position.x = -90;
-  }
+  updateZoomDamping();
   controls.update();
   renderer.render(scene, camera);
 });
