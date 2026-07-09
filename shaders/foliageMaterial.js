@@ -13,7 +13,7 @@ export function createFoliageMaterial({ alphaTexture, noiseTexture, terrainSize 
   const uniforms = {
     uTime: { value: 0 },
     uPointer: { value: new THREE.Vector3(0, -1000, 0) }, // world pos, starts far away
-    uDayFactor: { value: 1 },
+    uTint: { value: new THREE.Color(0.82, 0.82, 0.82) }, // scene light tint, set per frame
     uNoiseScale: { value: 1.5 },
     uColor1: { value: new THREE.Color('#8fe8d8') }, // grass tip colors
     uColor2: { value: new THREE.Color('#05a3af') },
@@ -71,7 +71,7 @@ export function createFoliageMaterial({ alphaTexture, noiseTexture, terrainSize 
       uniform sampler2D uAlphaTexture;
       uniform sampler2D uNoiseTexture;
       uniform float uNoiseScale;
-      uniform float uDayFactor;
+      uniform vec3 uTint;
       uniform vec3 uColor1;
       uniform vec3 uColor2;
       varying vec2 vUv;
@@ -82,10 +82,8 @@ export function createFoliageMaterial({ alphaTexture, noiseTexture, terrainSize 
 
         vec4 variation = texture2D(uNoiseTexture, vGlobalUV * uNoiseScale);
         vec3 color = mix(uColor1, uColor2, variation.r);
-        // Slightly darker than the grass tips so crowns keep some depth
-        color *= 0.75 + variation.g * 0.25;
-        // Same day/night dim + cool as the grass
-        color *= mix(vec3(0.30, 0.36, 0.55), vec3(0.82), uDayFactor);
+        // Same scene-light tint as the grass (sun/moon + sky, from the timeline)
+        color *= uTint;
 
         gl_FragColor = vec4(color, 1.0);
         #include <tonemapping_fragment>

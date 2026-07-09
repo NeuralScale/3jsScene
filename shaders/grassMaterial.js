@@ -8,7 +8,7 @@ export function createFluffyGrassMaterial({ alphaTexture, noiseTexture, terrainS
   const uniforms = {
     uTime: { value: 0 },
     uPointer: { value: new THREE.Vector3(0, -1000, 0) }, // world pos, starts far away
-    uDayFactor: { value: 1 },
+    uTint: { value: new THREE.Color(0.82, 0.82, 0.82) }, // scene light tint, set per frame
     uNoiseScale: { value: 1.5 },
     uBaseColor: { value: new THREE.Color('#036d75') },
     uTipColor1: { value: new THREE.Color('#8fe8d8') },
@@ -60,7 +60,7 @@ export function createFluffyGrassMaterial({ alphaTexture, noiseTexture, terrainS
       uniform sampler2D uGrassAlphaTexture;
       uniform sampler2D uNoiseTexture;
       uniform float uNoiseScale;
-      uniform float uDayFactor;
+      uniform vec3 uTint;
       uniform vec3 uBaseColor;
       uniform vec3 uTipColor1;
       uniform vec3 uTipColor2;
@@ -73,8 +73,8 @@ export function createFluffyGrassMaterial({ alphaTexture, noiseTexture, terrainS
         vec4 variation = texture2D(uNoiseTexture, vGlobalUV * uNoiseScale);
         vec3 tipColor = mix(uTipColor1, uTipColor2, variation.r);
         vec3 color = mix(uBaseColor, tipColor, vUv.y);
-        // Day/night: dim and cool the grass at night, keep day below full blast
-        color *= mix(vec3(0.30, 0.36, 0.55), vec3(0.82), uDayFactor);
+        // Tinted by the scene's current sun/moon + sky light (from the timeline)
+        color *= uTint;
 
         gl_FragColor = vec4(color, 1.0);
         #include <tonemapping_fragment>

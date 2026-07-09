@@ -3,9 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <!-- Declare the page as dark-by-design: without this, Android Chrome's
+       Auto Dark Theme rewrites bright UI colors (dial handle yellow -> brown)
+       and overrides the JS-driven colors entirely -->
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0a101c" />
   <title>Shader Water Pond Sample</title>
   <style>
     * { margin: 0; padding: 0; }
+    /* No selectable text anywhere: stops mobile long-press from starting a
+       selection / copy callout over the canvas */
+    html {
+      color-scheme: dark;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      /* Mobile browsers tint tapped elements (visible on the time dial and
+         live button); the scene should look the same as with a mouse */
+      -webkit-tap-highlight-color: transparent;
+    }
     body { overflow: hidden; touch-action: manipulation; }
     canvas { display: block; }
     #time-panel {
@@ -14,8 +30,8 @@
       right: 20px;
       display: flex;
       flex-direction: column;
-      align-items: flex-end;
-      gap: 8px;
+      align-items: center; /* clock, ring and live share a vertical axis */
+      gap: 6px;
       font-family: 'Segoe UI', system-ui, sans-serif;
       color: rgba(255, 255, 255, 0.85);
       user-select: none;
@@ -23,15 +39,22 @@
       z-index: 10;
     }
     #clock {
-      font-size: 1rem;
+      font-size: 0.78rem;
       font-variant-numeric: tabular-nums;
       text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+    }
+    #date {
+      font-size: 0.6rem;
+      letter-spacing: 0.04em;
+      color: rgba(255, 255, 255, 0.65);
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+      margin-bottom: -3px; /* sit tight against the clock */
     }
     /* 24h dial: drag the dot around the ring (noon top, midnight bottom) */
     #time-dial {
       position: relative;
-      width: 58px;
-      height: 58px;
+      width: 44px;
+      height: 44px;
       border-radius: 50%;
       border: 1px solid rgba(255, 255, 255, 0.25);
       background: rgba(10, 16, 28, 0.35);
@@ -56,9 +79,9 @@
       position: absolute;
       top: 0;
       left: 0;
-      width: 11px;
-      height: 11px;
-      margin: -5.5px;
+      width: 9px;
+      height: 9px;
+      margin: -4.5px;
       border-radius: 50%;
       background: #4fc3ad;
       box-shadow: 0 0 6px rgba(0, 0, 0, 0.5);
@@ -66,14 +89,14 @@
     }
     #live-button {
       font-family: inherit;
-      font-size: 0.6rem;
+      font-size: 0.55rem;
       letter-spacing: 0.1em;
       text-transform: uppercase;
       color: rgba(255, 255, 255, 0.6);
       background: rgba(10, 16, 28, 0.35);
       border: 1px solid rgba(255, 255, 255, 0.25);
       border-radius: 999px;
-      padding: 3px 9px;
+      padding: 2px 7px;
       cursor: pointer;
       pointer-events: auto;
       touch-action: manipulation;
@@ -100,12 +123,17 @@
 </head>
 <body>
   <div id="time-panel">
+    <div id="date"></div>
     <div id="clock"></div>
     <div id="time-dial" role="slider" aria-label="Time of day" aria-valuemin="0" aria-valuemax="1439">
       <div id="dial-handle"></div>
     </div>
     <button id="live-button" type="button" title="Follow real time">live</button>
   </div>
+  <script>
+    // Android fires contextmenu on long-press even with selection disabled
+    window.addEventListener('contextmenu', (event) => event.preventDefault());
+  </script>
   <script type="module" src="./main.js"></script>
 </body>
 </html>

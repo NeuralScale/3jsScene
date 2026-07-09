@@ -7,35 +7,195 @@ import { vertexCommon, vertexBegin, noiseGLSL, pondDepth } from './shaders/commo
 import { groundFragmentCommon, groundFragmentColor, groundFragmentEmissive } from './shaders/ground.glsl.js';
 import { ripplesFragmentCommon, ripplesFragmentColor, ripplesFragmentEmissive } from './shaders/ripples.glsl.js';
 
-// Day and night palettes — the live colors blend between them by real local time
-const PALETTES = {
-  night: {
+// Color timeline: keyframes through the day, sampled by the clock and
+// smoothly blended between neighbors (wrapping across midnight). The water
+// runs inverted — bright at night, darker by day — with warm tints at the
+// sun's rise and set.
+const TIMELINE = [
+  { // deep night
+    hour: 1.0,
     fog: new THREE.Color(0.012, 0.02, 0.055),
-    ground: new THREE.Color(0x05a3af),
-    shallow: new THREE.Color(0.09, 0.32, 0.3),
-    deep: new THREE.Color(0.04, 0.2, 0.24),
+    shallow: new THREE.Color(0.32, 0.9, 0.79),
+    deep: new THREE.Color(0.16, 0.74, 0.75),
+    skyTop: new THREE.Color(0x010207),
+    skyHigh: new THREE.Color(0x0c0620), // deep violet
+    skyMid: new THREE.Color(0x05081a),
+    skyLow: new THREE.Color(0x131a40), // indigo band
+    skyHorizon: new THREE.Color(0x0a0f1f),
     keyColor: new THREE.Color(0xbfd4ff),
     keyIntensity: 0.8,
     ambientColor: new THREE.Color(0x8899cc),
     ambientIntensity: 0.25,
   },
-  day: {
-    fog: new THREE.Color(0.196, 0.51, 0.804),
-    ground: new THREE.Color(0x05a3af),
-    shallow: new THREE.Color(0.32, 0.9, 0.79),
-    deep: new THREE.Color(0.16, 0.74, 0.75),
-    keyColor: new THREE.Color(0xfff4e6),
-    keyIntensity: 1.5,
-    ambientColor: new THREE.Color(0xfff8f0),
+  { // pre-dawn: a violet hint creeps into the dark
+    hour: 5.0,
+    fog: new THREE.Color(0.035, 0.03, 0.085),
+    shallow: new THREE.Color(0.27, 0.74, 0.7),
+    deep: new THREE.Color(0.13, 0.58, 0.62),
+    skyTop: new THREE.Color(0x0a1030),
+    skyHigh: new THREE.Color(0x101638),
+    skyMid: new THREE.Color(0x191a3e),
+    skyLow: new THREE.Color(0x3a2a58), // waking purple
+    skyHorizon: new THREE.Color(0x2a2145),
+    keyColor: new THREE.Color(0x9fa8d8),
+    keyIntensity: 0.7,
+    ambientColor: new THREE.Color(0x8890c0),
+    ambientIntensity: 0.24,
+  },
+  { // sunrise: pink-orange horizon, warm light
+    hour: 7.0,
+    fog: new THREE.Color(0.32, 0.2, 0.26),
+    shallow: new THREE.Color(0.3, 0.62, 0.6),
+    deep: new THREE.Color(0.16, 0.46, 0.5),
+    skyTop: new THREE.Color(0x2c4a8a),
+    skyHigh: new THREE.Color(0x4a5fa0), // slate blue
+    skyMid: new THREE.Color(0x8a72a4), // lavender belt
+    skyLow: new THREE.Color(0xd88aa0), // rose pink over the blush
+    skyHorizon: new THREE.Color(0xe8886a),
+    keyColor: new THREE.Color(0xffc487),
+    keyIntensity: 1.1,
+    ambientColor: new THREE.Color(0xffd9c0),
+    ambientIntensity: 0.3,
+  },
+  { // morning (~10am): dominantly light blue, very bright
+    hour: 9.5,
+    fog: new THREE.Color(0.11, 0.3, 0.5),
+    shallow: new THREE.Color(0.2, 0.56, 0.52),
+    deep: new THREE.Color(0.1, 0.4, 0.44),
+    skyTop: new THREE.Color(0x0f3270), // cobalt
+    skyHigh: new THREE.Color(0x1e4a8c),
+    skyMid: new THREE.Color(0x2f6198), // azure
+    skyLow: new THREE.Color(0x63a2b4), // minty band
+    skyHorizon: new THREE.Color(0x74a6ba), // soft teal-tinted horizon
+    keyColor: new THREE.Color(0xfff0d8),
+    keyIntensity: 1.25,
+    ambientColor: new THREE.Color(0xfff5e8),
     ambientIntensity: 0.32,
   },
+  { // noon: full daylight
+    hour: 13.0,
+    fog: new THREE.Color(0.1, 0.29, 0.5),
+    shallow: new THREE.Color(0.17, 0.52, 0.48),
+    deep: new THREE.Color(0.09, 0.36, 0.4),
+    skyTop: new THREE.Color(0x0b2a60), // deep ultramarine
+    skyHigh: new THREE.Color(0x163a7a),
+    skyMid: new THREE.Color(0x26538c), // muted royal blue
+    skyLow: new THREE.Color(0x4a7cb0), // periwinkle band
+    skyHorizon: new THREE.Color(0x5f8fb2), // dusty light blue
+    keyColor: new THREE.Color(0xfff4e6),
+    keyIntensity: 1.3,
+    ambientColor: new THREE.Color(0xfff8f0),
+    ambientIntensity: 0.28,
+  },
+  { // golden hour: everything warms up
+    hour: 17.5,
+    fog: new THREE.Color(0.4, 0.31, 0.22),
+    shallow: new THREE.Color(0.24, 0.52, 0.46),
+    deep: new THREE.Color(0.13, 0.38, 0.4),
+    skyTop: new THREE.Color(0x2f5490),
+    skyHigh: new THREE.Color(0x475d92), // steel blue
+    skyMid: new THREE.Color(0x9d8398), // dusty pink belt
+    skyLow: new THREE.Color(0xd8909a), // rose gold
+    skyHorizon: new THREE.Color(0xf0a860),
+    keyColor: new THREE.Color(0xffcf8f),
+    keyIntensity: 1.3,
+    ambientColor: new THREE.Color(0xffe3c2),
+    ambientIntensity: 0.3,
+  },
+  { // sunset: burnt orange sinking into purple
+    hour: 19.5,
+    fog: new THREE.Color(0.28, 0.13, 0.19),
+    shallow: new THREE.Color(0.3, 0.58, 0.58),
+    deep: new THREE.Color(0.16, 0.42, 0.48),
+    skyTop: new THREE.Color(0x1a2a5e),
+    skyHigh: new THREE.Color(0x333a70), // indigo
+    skyMid: new THREE.Color(0x6f4a74), // purple
+    skyLow: new THREE.Color(0xc25a80), // magenta streak
+    skyHorizon: new THREE.Color(0xe06a55),
+    keyColor: new THREE.Color(0xff9a68),
+    keyIntensity: 1.0,
+    ambientColor: new THREE.Color(0xd9a8b8),
+    ambientIntensity: 0.27,
+  },
+  { // dusk: last purple glow fading out
+    hour: 21.0,
+    fog: new THREE.Color(0.05, 0.04, 0.1),
+    shallow: new THREE.Color(0.27, 0.68, 0.65),
+    deep: new THREE.Color(0.13, 0.52, 0.56),
+    skyTop: new THREE.Color(0x060a1c),
+    skyHigh: new THREE.Color(0x0a0e28),
+    skyMid: new THREE.Color(0x121236),
+    skyLow: new THREE.Color(0x2a2050), // last violet glow
+    skyHorizon: new THREE.Color(0x1c1838),
+    keyColor: new THREE.Color(0xa8b4e8),
+    keyIntensity: 0.8,
+    ambientColor: new THREE.Color(0x9098c8),
+    ambientIntensity: 0.25,
+  },
+];
+
+// Fantasy-style skies: push every keyframe's sky bands toward richer, more
+// saturated hues (same brightness, just more color) — one knob for the look
+const SKY_SATURATION_BOOST = 1.55;
+{
+  const hsl = { h: 0, s: 0, l: 0 };
+  for (const keyframe of TIMELINE) {
+    for (const band of ['skyTop', 'skyHigh', 'skyMid', 'skyLow', 'skyHorizon']) {
+      keyframe[band].getHSL(hsl, THREE.SRGBColorSpace);
+      keyframe[band].setHSL(
+        hsl.h,
+        Math.min(1, hsl.s * SKY_SATURATION_BOOST + 0.04),
+        hsl.l,
+        THREE.SRGBColorSpace
+      );
+    }
+  }
+}
+
+// Blend of the two timeline keyframes around `hour` (wraps across midnight)
+const livePalette = {
+  fog: new THREE.Color(),
+  shallow: new THREE.Color(),
+  deep: new THREE.Color(),
+  skyTop: new THREE.Color(),
+  skyHigh: new THREE.Color(),
+  skyMid: new THREE.Color(),
+  skyLow: new THREE.Color(),
+  skyHorizon: new THREE.Color(),
+  keyColor: new THREE.Color(),
+  keyIntensity: 0,
+  ambientColor: new THREE.Color(),
+  ambientIntensity: 0,
 };
 
+function samplePalette(hour) {
+  let a = TIMELINE[TIMELINE.length - 1];
+  let b = TIMELINE[0];
+  let span = b.hour + 24 - a.hour;
+  let t = ((hour - a.hour + 24) % 24) / span;
+  for (let i = 0; i < TIMELINE.length - 1; i++) {
+    if (hour >= TIMELINE[i].hour && hour < TIMELINE[i + 1].hour) {
+      a = TIMELINE[i];
+      b = TIMELINE[i + 1];
+      t = (hour - a.hour) / (b.hour - a.hour);
+      break;
+    }
+  }
+  t = THREE.MathUtils.clamp(t, 0, 1);
+  t = t * t * (3 - 2 * t); // ease each segment so keyframes don't feel angular
+  for (const key of ['fog', 'shallow', 'deep', 'skyTop', 'skyHigh', 'skyMid', 'skyLow', 'skyHorizon', 'keyColor', 'ambientColor']) {
+    livePalette[key].copy(a[key]).lerp(b[key], t);
+  }
+  livePalette.keyIntensity = THREE.MathUtils.lerp(a.keyIntensity, b.keyIntensity, t);
+  livePalette.ambientIntensity = THREE.MathUtils.lerp(a.ambientIntensity, b.ambientIntensity, t);
+  return livePalette;
+}
+
 // Live colors, mutated in place by applyTimeOfDay()
-const FOG_COLOR = PALETTES.night.fog.clone();
-const GROUND_COLOR = PALETTES.night.ground.clone();
-const WATER_SHALLOW = PALETTES.night.shallow.clone();
-const WATER_DEEP = PALETTES.night.deep.clone();
+const FOG_COLOR = TIMELINE[0].fog.clone();
+const GROUND_COLOR = new THREE.Color(0x05a3af);
+const WATER_SHALLOW = TIMELINE[0].shallow.clone();
+const WATER_DEEP = TIMELINE[0].deep.clone();
 
 const PLANE_SIZE = 13;
 const POND_CENTER = new THREE.Vector2(0.0, 0.0); // world xz
@@ -344,6 +504,23 @@ const { material: foliageMaterial, uniforms: foliageUniforms } = createFoliageMa
   terrainSize: PLANE_SIZE,
 });
 const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x2b2033, roughness: 1.0 });
+// Procedural bark: noise stretched vertically reads as ridges and furrows
+// (high frequency around the trunk, low along it), with a second finer
+// layer breaking the stripes up so they don't look ruled on
+trunkMaterial.onBeforeCompile = (shader) => {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', vertexCommon)
+    .replace('#include <begin_vertex>', vertexBegin);
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', `#include <common>\n${noiseGLSL}`)
+    .replace('#include <color_fragment>', `#include <color_fragment>
+  float ridges = vnoise(vec2(vWorldPos.x * 14.0 + vWorldPos.z * 14.0, vWorldPos.y * 2.0));
+  float grain = vnoise(vec2(vWorldPos.x * 40.0 + vWorldPos.z * 40.0, vWorldPos.y * 9.0));
+  float bark = ridges * 0.7 + grain * 0.3;
+  // Furrows darken sharply, ridge tops pick up a faint warm highlight
+  diffuseColor.rgb *= 0.62 + smoothstep(0.25, 0.85, bark) * 0.75;
+  diffuseColor.rgb += vec3(0.05, 0.035, 0.04) * smoothstep(0.75, 1.0, bark);`);
+};
 
 // A cloud of collapsed quads scattered in a squashed sphere; the foliage
 // shader spreads each one into a camera-facing puff sized by aPuffSize.
@@ -360,17 +537,24 @@ function mulberry32(seed) {
   };
 }
 
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
 function makeCrownGeometry(puffCount, radius, puffSize, rand) {
   const quads = [];
   const dir = new THREE.Vector3();
   for (let i = 0; i < puffCount; i++) {
     const quad = new THREE.PlaneGeometry(0, 0);
-    // Uniform direction on the sphere, squashed vertically
-    const u = rand() * 2 - 1;
-    const phi = rand() * Math.PI * 2;
+    // Fibonacci-sphere directions (evenly spread — pure random can dump most
+    // puffs on one side of a 10-puff crown) with jitter, squashed vertically
+    const u = THREE.MathUtils.clamp(
+      1 - ((i + 0.5) / puffCount) * 2 + (rand() - 0.5) * 0.35,
+      -1,
+      1
+    );
+    const phi = i * GOLDEN_ANGLE + (rand() - 0.5) * 1.2;
     const s = Math.sqrt(1 - u * u);
     dir.set(s * Math.cos(phi), u * 0.6, s * Math.sin(phi))
-      .multiplyScalar(radius * Math.cbrt(rand()));
+      .multiplyScalar(radius * (0.55 + 0.45 * rand()));
     quad.translate(dir.x, dir.y, dir.z);
     const normal = dir.clone().normalize();
     const normals = quad.attributes.normal;
@@ -386,18 +570,23 @@ function createTree(treeScale, seed) {
   const rand = mulberry32(seed);
   const tree = new THREE.Group();
   const trunkHeight = (1.5 + rand() * 0.6) * treeScale;
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.09 * treeScale, 0.16 * treeScale, trunkHeight, 7),
-    trunkMaterial
-  );
-  trunk.position.y = trunkHeight / 2;
-  tree.add(trunk);
 
   // Puff size is a view-space offset, so tree scale is baked into the
   // geometry here rather than applied via tree.scale
   const crownRadius = (0.9 + rand() * 0.4) * treeScale;
+
+  // The trunk continues well into the crown: puff placement is random, so a
+  // seed can leave the canopy's underside sparse — without this the crown
+  // can read as floating above a too-short trunk
+  const trunkLength = trunkHeight + crownRadius * 0.8;
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.09 * treeScale, 0.16 * treeScale, trunkLength, 7),
+    trunkMaterial
+  );
+  trunk.position.y = trunkLength / 2;
+  tree.add(trunk);
   const crown = new THREE.Mesh(
-    makeCrownGeometry(10, crownRadius, 0.85 * treeScale, rand),
+    makeCrownGeometry(18, crownRadius, 0.75 * treeScale, rand),
     foliageMaterial
   );
   crown.position.y = trunkHeight + crownRadius * 0.35;
@@ -442,20 +631,18 @@ hoverTargets.push(ground);
 // Foliage shares the grass's eased pointer so crowns and blades bend together
 foliageUniforms.uPointer.value = grassUniforms.uPointer.value;
 
-// --- Sky: gradient dome (deep zenith to lighter horizon), day/night driven ---
-const SKY_COLORS = {
-  night: {
-    top: new THREE.Color(0x010207),
-    horizon: new THREE.Color(0x0a0f1f),
-  },
-  day: {
-    top: new THREE.Color(0x184f9b),
-    horizon: new THREE.Color(0x6ba3d6),
-  },
-};
+// --- Sky: gradient dome, timeline driven. Three vertical stops (horizon,
+// mid-band, zenith) plus an azimuthal glow so the horizon isn't one flat
+// ring: warm around the sun at its rise/set, faintly cool around the moon ---
 const skyUniforms = {
-  uTopColor: { value: SKY_COLORS.night.top.clone() },
-  uHorizonColor: { value: SKY_COLORS.night.horizon.clone() },
+  uTopColor: { value: TIMELINE[0].skyTop.clone() },
+  uHighColor: { value: TIMELINE[0].skyHigh.clone() },
+  uMidColor: { value: TIMELINE[0].skyMid.clone() },
+  uLowColor: { value: TIMELINE[0].skyLow.clone() },
+  uHorizonColor: { value: TIMELINE[0].skyHorizon.clone() },
+  uGlowDir: { value: new THREE.Vector2(0, -1) }, // xz direction of sun/moon
+  uGlowColor: { value: new THREE.Color(0xffa95e) },
+  uGlowStrength: { value: 0 },
 };
 const sky = new THREE.Mesh(
   new THREE.SphereGeometry(130, 32, 16),
@@ -472,12 +659,26 @@ const sky = new THREE.Mesh(
     `,
     fragmentShader: /* glsl */ `
       uniform vec3 uTopColor;
+      uniform vec3 uHighColor;
+      uniform vec3 uMidColor;
+      uniform vec3 uLowColor;
       uniform vec3 uHorizonColor;
+      uniform vec2 uGlowDir;
+      uniform vec3 uGlowColor;
+      uniform float uGlowStrength;
       varying vec3 vDir;
       void main() {
-        float h = normalize(vDir).y;
-        // Horizon band wraps below eye level too, since the island floats
-        vec3 color = mix(uHorizonColor, uTopColor, smoothstep(0.0, 0.65, abs(h)));
+        // Five stacked bands, wrapping below eye level too (floating island)
+        float h = abs(normalize(vDir).y);
+        vec3 color = mix(uHorizonColor, uLowColor, smoothstep(0.0, 0.14, h));
+        color = mix(color, uMidColor, smoothstep(0.1, 0.32, h));
+        color = mix(color, uHighColor, smoothstep(0.28, 0.52, h));
+        color = mix(color, uTopColor, smoothstep(0.46, 0.8, h));
+        // Directional glow hugging the horizon around the sun/moon azimuth,
+        // so opposite sides of the sky at the same height differ in color
+        float azimuth = max(dot(normalize(vDir.xz), uGlowDir), 0.0);
+        float hug = 1.0 - smoothstep(0.0, 0.45, h);
+        color = mix(color, uGlowColor, pow(azimuth, 3.0) * hug * uGlowStrength);
         gl_FragColor = vec4(color, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -491,18 +692,41 @@ scene.add(sky);
 // --- Sun & moon: horizon-level glow sprites. The camera's polar limits
 // never let it look up at the sky, so both ride just above the horizon
 // (below camera eye level) where they show up behind the island. ---
+// Built as a DataTexture rather than a 2D-canvas radial gradient: canvas
+// pixels are premultiplied by alpha, and un-premultiplying on texture upload
+// amplifies quantization noise in the faint halo into colored speckles
+// (clearly visible on mobile GPUs). Writing straight RGBA avoids that.
 function makeGlowTexture(core, mid, halo) {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 128;
-  const ctx = canvas.getContext('2d');
-  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.18, core);
-  g.addColorStop(0.45, mid);
-  g.addColorStop(1, halo);
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 128, 128);
-  return new THREE.CanvasTexture(canvas);
+  const SIZE = 128;
+  // Stops as [r, g, b, a] in 0-1, matching the old gradient stops
+  const stops = [
+    { at: 0.0, color: [1, 1, 1, 1] },
+    { at: 0.18, color: core },
+    { at: 0.45, color: mid },
+    { at: 1.0, color: halo },
+  ];
+  const data = new Uint8Array(SIZE * SIZE * 4);
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      const d = Math.min(
+        Math.hypot(x + 0.5 - SIZE / 2, y + 0.5 - SIZE / 2) / (SIZE / 2),
+        1
+      );
+      let s = 1;
+      while (s < stops.length - 1 && stops[s].at < d) s++;
+      const a = stops[s - 1];
+      const b = stops[s];
+      const t = (d - a.at) / (b.at - a.at);
+      const o = (y * SIZE + x) * 4;
+      for (let c = 0; c < 4; c++) {
+        data[o + c] = Math.round((a.color[c] + (b.color[c] - a.color[c]) * t) * 255);
+      }
+    }
+  }
+  const texture = new THREE.DataTexture(data, SIZE, SIZE);
+  texture.magFilter = texture.minFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
 }
 
 function makeGlowSprite(texture, size) {
@@ -516,11 +740,19 @@ function makeGlowSprite(texture, size) {
 
 // Sprite sizes scale with the arc distance to keep the same apparent size
 const sun = makeGlowSprite(
-  makeGlowTexture('rgba(255,244,214,0.95)', 'rgba(255,214,140,0.30)', 'rgba(255,200,120,0)'),
+  makeGlowTexture(
+    [255 / 255, 244 / 255, 214 / 255, 0.95],
+    [255 / 255, 214 / 255, 140 / 255, 0.3],
+    [255 / 255, 200 / 255, 120 / 255, 0]
+  ),
   20
 );
 const moon = makeGlowSprite(
-  makeGlowTexture('rgba(228,238,255,0.95)', 'rgba(180,200,240,0.25)', 'rgba(160,180,230,0)'),
+  makeGlowTexture(
+    [228 / 255, 238 / 255, 255 / 255, 0.95],
+    [180 / 255, 200 / 255, 240 / 255, 0.25],
+    [160 / 255, 180 / 255, 230 / 255, 0]
+  ),
   13
 );
 
@@ -533,6 +765,8 @@ const sunPosition = new THREE.Vector3();
 const sunDirection = new THREE.Vector3(0, 1, 0);
 const moonDirection = new THREE.Vector3(0, 1, 0);
 const sunColor = new THREE.Color();
+const foliageTint = new THREE.Color();
+const tintScratch = new THREE.Color();
 
 // --- Falling leaves: small quads fluttering down from the crowns ---
 const LEAF_COUNT = 45;
@@ -570,6 +804,8 @@ for (let i = 0; i < LEAF_COUNT; i++) {
   // Start scattered through the air so the effect doesn't begin in bursts
   state.y *= leafRand();
   leafStates.push(state);
+  // Same shading as the tree foliage shader: a plain blend between the two
+  // crown colors, no darkening
   leafColor.copy(leafColor1).lerp(leafColor2, leafRand());
   leaves.setColorAt(i, leafColor);
 }
@@ -725,6 +961,7 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
 
 // --- Clock + day/night cycle: follows real time, or a slider-scrubbed time ---
 const clockElement = document.getElementById('clock');
+const dateElement = document.getElementById('date');
 const timeDial = document.getElementById('time-dial');
 const dialHandle = document.getElementById('dial-handle');
 const liveButton = document.getElementById('live-button');
@@ -765,6 +1002,12 @@ function daylightFactor(hour) {
 
 function applyTimeOfDay() {
   const now = new Date();
+  // The actual local date — scrubbing only changes the time of day
+  dateElement.textContent = now.toLocaleDateString([], {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
   let minutes;
   if (manualMinutes === null) {
     minutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
@@ -784,22 +1027,20 @@ function applyTimeOfDay() {
 
   const t = daylightFactor(minutes / 60);
   updateDial(minutes, t);
-  const n = PALETTES.night;
-  const d = PALETTES.day;
+  const hour = minutes / 60;
+  const pal = samplePalette(hour);
 
-  FOG_COLOR.copy(n.fog).lerp(d.fog, t);
-  GROUND_COLOR.copy(n.ground).lerp(d.ground, t);
-  WATER_SHALLOW.copy(n.shallow).lerp(d.shallow, t);
-  WATER_DEEP.copy(n.deep).lerp(d.deep, t);
+  FOG_COLOR.copy(pal.fog);
+  WATER_SHALLOW.copy(pal.shallow);
+  WATER_DEEP.copy(pal.deep);
   scene.background.copy(FOG_COLOR);
 
-  // Sky gradient tracks the cycle; horizon warms toward the low sun
-  skyUniforms.uTopColor.value.copy(SKY_COLORS.night.top).lerp(SKY_COLORS.day.top, t);
-  skyUniforms.uHorizonColor.value
-    .copy(SKY_COLORS.night.horizon)
-    .lerp(SKY_COLORS.day.horizon, t);
-
-  const hour = minutes / 60;
+  // Sky gradient tracks the timeline
+  skyUniforms.uTopColor.value.copy(pal.skyTop);
+  skyUniforms.uHighColor.value.copy(pal.skyHigh);
+  skyUniforms.uMidColor.value.copy(pal.skyMid);
+  skyUniforms.uLowColor.value.copy(pal.skyLow);
+  skyUniforms.uHorizonColor.value.copy(pal.skyHorizon);
 
   // Sun: 0 at sunrise (east horizon), 1 at sunset (west). The whole arc
   // stays near the horizon — below camera eye level — so the disc is
@@ -807,38 +1048,53 @@ function applyTimeOfDay() {
   const dayProgress = THREE.MathUtils.clamp((hour - 6) / 14, 0, 1);
   const theta = dayProgress * Math.PI;
   const elevation = Math.sin(theta);
-  sunPosition.set(Math.cos(theta) * 72, 2.4 + elevation * 4.4, -28);
+  sunPosition.set(Math.cos(theta) * 108, 3.6 + elevation * 6.6, -42);
   sunDirection.copy(sunPosition).normalize();
   sunColor.copy(SUN_COLOR_LOW).lerp(SUN_COLOR_HIGH, elevation);
-
-  // Warm the horizon when the sun is low (sunrise / sunset glow)
-  skyUniforms.uHorizonColor.value.lerp(sunColor, t * (1 - elevation) * 0.35);
 
   sun.position.copy(sunPosition);
   sun.material.color.copy(sunColor);
   // Fade the disc in/out around sunrise and sunset
   const rim = Math.min(hour - 6, 20 - hour);
-  sun.material.opacity = THREE.MathUtils.clamp(rim * 2, 0, 1);
+  const sunOpacity = THREE.MathUtils.clamp(rim * 2, 0, 1);
+  sun.material.opacity = sunOpacity;
 
-  // Moon: same horizon ride, sunset 20h to sunrise 6h
+  // Moon: same horizon ride, sunset 20h to sunrise 6h. Like the sun, it
+  // fades over the half hour after rise and before set instead of blinking
   const moonProgress = (hour >= 20 ? hour - 20 : hour + 4) / 10;
-  const moonUp = moonProgress >= 0 && moonProgress <= 1 && (hour >= 20 || hour < 6);
   const moonTheta = moonProgress * Math.PI;
   const moonElevation = Math.sin(moonTheta);
-  moon.position.set(Math.cos(moonTheta) * 72, 2.4 + moonElevation * 4.4, -28);
+  moon.position.set(Math.cos(moonTheta) * 108, 3.6 + moonElevation * 6.6, -42);
   moonDirection.copy(moon.position).normalize();
-  moon.material.opacity = moonUp ? 0.9 : 0;
+  const moonRim = Math.min(moonProgress, 1 - moonProgress) * 10; // hours from rise/set
+  const moonOpacity = THREE.MathUtils.clamp(moonRim * 2, 0, 1) * 0.9;
+  moon.material.opacity = moonOpacity;
+
+  // Sky horizon glow: warm around a low sun (strongest at rise/set, fading
+  // as it climbs), or a faint cool sheen around the moon at night
+  if (sunOpacity > 0) {
+    skyUniforms.uGlowDir.value.set(sunPosition.x, sunPosition.z).normalize();
+    skyUniforms.uGlowColor.value.copy(sunColor).lerp(WHITE, 0.15);
+    skyUniforms.uGlowStrength.value = sunOpacity * (1 - elevation * 0.75) * 0.55;
+  } else if (moonOpacity > 0) {
+    skyUniforms.uGlowDir.value.set(moon.position.x, moon.position.z).normalize();
+    skyUniforms.uGlowColor.value.copy(MOON_GLINT_COLOR);
+    skyUniforms.uGlowStrength.value = (moonOpacity / 0.9) * 0.18;
+  } else {
+    skyUniforms.uGlowStrength.value = 0;
+  }
 
   // Stars come out as the daylight goes
   stars.material.opacity = (1 - t) * 0.9;
   stars.visible = t < 1;
 
-  // Key light tracks the sun by day, falls back to the moon angle at night
+  // Key light tracks the sun by day, falls back to the moon angle at night;
+  // its color and intensity come from the timeline keyframes
   keyLight.position.lerpVectors(NIGHT_LIGHT_POS, sunPosition, t);
-  keyLight.color.copy(n.keyColor).lerp(sunColor, t);
-  keyLight.intensity = THREE.MathUtils.lerp(n.keyIntensity, d.keyIntensity, t);
-  ambientLight.color.copy(n.ambientColor).lerp(d.ambientColor, t);
-  ambientLight.intensity = THREE.MathUtils.lerp(n.ambientIntensity, d.ambientIntensity, t);
+  keyLight.color.copy(pal.keyColor);
+  keyLight.intensity = pal.keyIntensity;
+  ambientLight.color.copy(pal.ambientColor);
+  ambientLight.intensity = pal.ambientIntensity;
 
   // Glint on the pond: sun by day, a fainter cool moon streak at night
   if (t > 0) {
@@ -846,19 +1102,27 @@ function applyTimeOfDay() {
     // Half-desaturated toward white so a low sun doesn't stain the teal olive
     groundUniforms.uSunGlintColor.value.copy(sunColor).lerp(WHITE, 0.5);
     groundUniforms.uSunGlint.value = t;
-  } else if (moonUp) {
+  } else if (moonOpacity > 0) {
     groundUniforms.uSunDir.value.copy(moonDirection);
     groundUniforms.uSunGlintColor.value.copy(MOON_GLINT_COLOR);
-    groundUniforms.uSunGlint.value = 0.3;
+    // Glint fades with the moon so it doesn't linger after moonset
+    groundUniforms.uSunGlint.value = 0.3 * (moonOpacity / 0.9);
   } else {
     groundUniforms.uSunGlint.value = 0;
   }
 
-  grassUniforms.uDayFactor.value = t;
-  foliageUniforms.uDayFactor.value = t;
-  // Leaves: instanceColor is multiplied by material.color, so the same
-  // dim-and-cool night tint as the grass goes there
-  leaves.material.color.setRGB(0.30, 0.36, 0.55).lerp(new THREE.Color(0.82, 0.82, 0.82), t);
+  // Grass, tree foliage and falling leaves reflect the current scene light:
+  // sun/moon key color scaled by intensity, the ambient, and a touch of the
+  // sky horizon — so sunrise stains them pink, noon is bright and neutral,
+  // and night cools them down, all from the same timeline keyframes.
+  foliageTint
+    .copy(pal.keyColor).multiplyScalar(pal.keyIntensity * 0.4)
+    .add(tintScratch.copy(pal.ambientColor).multiplyScalar(pal.ambientIntensity * 0.5))
+    .add(tintScratch.copy(pal.skyHorizon).multiplyScalar(0.12));
+  grassUniforms.uTint.value.copy(foliageTint);
+  foliageUniforms.uTint.value.copy(foliageTint);
+  // Leaves: instanceColor is multiplied by material.color, so the tint goes there
+  leaves.material.color.copy(foliageTint);
 
   // Fireflies only come out at night
   fireflies.material.opacity = 1 - t;
@@ -903,6 +1167,18 @@ liveButton.addEventListener('click', () => {
   updatePanelState();
   applyTimeOfDay();
 });
+
+// Pin the clock's width to the live format (the widest, with seconds) so
+// switching to the shorter manual format can't resize the right-anchored
+// panel and shift the dial and live button. tabular-nums keeps digit widths
+// equal, so one measurement holds for any time.
+clockElement.textContent = new Date().toLocaleTimeString([], {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+clockElement.style.minWidth = `${Math.ceil(clockElement.getBoundingClientRect().width)}px`;
+clockElement.style.textAlign = 'center';
 
 applyTimeOfDay();
 updatePanelState();

@@ -12,7 +12,7 @@
   the fluffy grass technique: instanced alpha-cutout tufts, base→tip color
   gradient, noise-driven tint variation, and sine + noise wind sway.
   - `shaders/grassMaterial.js` — adapted from `src/GrassMaterial.ts` (simplified:
-    no shadows/fog, retinted, added `uDayFactor` day/night dimming).
+    no shadows/fog, retinted, added `uTint` time-of-day light tinting).
   - `textures/grass.jpeg` — blade alpha texture from the repo.
   - `textures/perlinnoise.webp` — perlin noise texture from the repo.
 
