@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Shader Water Pond Sample</title>
   <style>
     * { margin: 0; padding: 0; }
-    body { overflow: hidden; }
+    body { overflow: hidden; touch-action: manipulation; }
     canvas { display: block; }
     #time-panel {
       position: fixed;
@@ -23,28 +23,60 @@
       z-index: 10;
     }
     #clock {
-      font-size: 1.4rem;
+      font-size: 1rem;
       font-variant-numeric: tabular-nums;
       text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
     }
-    #time-slider {
-      width: 190px;
-      accent-color: #4fc3ad;
+    /* 24h dial: drag the dot around the ring (noon top, midnight bottom) */
+    #time-dial {
+      position: relative;
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      background: rgba(10, 16, 28, 0.35);
       cursor: pointer;
       pointer-events: auto;
+      touch-action: none;
+    }
+    /* noon / midnight tick marks */
+    #time-dial::before,
+    #time-dial::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      width: 1px;
+      height: 5px;
+      margin-left: -0.5px;
+      background: rgba(255, 255, 255, 0.3);
+    }
+    #time-dial::before { top: 2px; }
+    #time-dial::after { bottom: 2px; }
+    #dial-handle {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 11px;
+      height: 11px;
+      margin: -5.5px;
+      border-radius: 50%;
+      background: #4fc3ad;
+      box-shadow: 0 0 6px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
     }
     #live-button {
       font-family: inherit;
-      font-size: 0.72rem;
+      font-size: 0.6rem;
       letter-spacing: 0.1em;
       text-transform: uppercase;
       color: rgba(255, 255, 255, 0.6);
       background: rgba(10, 16, 28, 0.35);
       border: 1px solid rgba(255, 255, 255, 0.25);
       border-radius: 999px;
-      padding: 4px 12px;
+      padding: 3px 9px;
       cursor: pointer;
       pointer-events: auto;
+      touch-action: manipulation;
     }
     #live-button::before {
       content: '● ';
@@ -69,7 +101,9 @@
 <body>
   <div id="time-panel">
     <div id="clock"></div>
-    <input id="time-slider" type="range" min="0" max="1439" step="1" aria-label="Time of day" />
+    <div id="time-dial" role="slider" aria-label="Time of day" aria-valuemin="0" aria-valuemax="1439">
+      <div id="dial-handle"></div>
+    </div>
     <button id="live-button" type="button" title="Follow real time">live</button>
   </div>
   <script type="module" src="./main.js"></script>

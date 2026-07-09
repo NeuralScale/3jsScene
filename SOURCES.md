@@ -16,6 +16,16 @@
   - `textures/grass.jpeg` — blade alpha texture from the repo.
   - `textures/perlinnoise.webp` — perlin noise texture from the repo.
 
+## Trees
+
+- **["Building fluffy trees with three.js"](https://douges.dev/blog/threejs-trees-1)** by
+  [Michael Dougall](https://douges.dev) — the fluffy foliage technique: alpha-cutout
+  quads inflated in view space by a UV-derived vertex offset (pseudo-billboarding).
+  - `shaders/foliageMaterial.js` — vertex shader ported from the article's
+    CustomShaderMaterial example onto `MeshStandardMaterial.onBeforeCompile`.
+  - `textures/foliage_alpha.png` — foliage alpha map from the article
+    (`douges.dev/static/foliage_alpha3.png`).
+
 ## Ripples
 
 - Click-spawned water drops in `shaders/ripples.glsl.js` are inspired by the

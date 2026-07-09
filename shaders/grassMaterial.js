@@ -35,12 +35,14 @@ export function createFluffyGrassMaterial({ alphaTexture, noiseTexture, terrainS
         vec4 modelPosition = modelMatrix * instanceMatrix * vec4(position, 1.0);
         vGlobalUV = (uTerrainSize - modelPosition.xz) / uTerrainSize;
 
-        // Wind: travelling sine wave broken up by scrolling noise, tips only
+        // Wind: travelling sine wave broken up by scrolling noise, tips only,
+        // plus a faster small flutter so blades never sit still
         vec4 noise = texture2D(uNoiseTexture, vGlobalUV + uTime * 0.001);
         float sway = sin(50.0 * dot(normalize(vec2(1.0, 1.0)), vGlobalUV) + noise.g * 5.5 + uTime)
-          * 0.1 * uv.y;
-        modelPosition.x += sway;
-        modelPosition.z += sway;
+          * 0.12 * uv.y;
+        float flutter = sin(uTime * 2.6 + noise.r * 12.0) * 0.035 * uv.y;
+        modelPosition.x += sway + flutter;
+        modelPosition.z += sway - flutter * 0.6;
 
         // Bend tips away from the hovered point, squashing down slightly
         vec2 away = modelPosition.xz - uPointer.xz;
@@ -71,8 +73,8 @@ export function createFluffyGrassMaterial({ alphaTexture, noiseTexture, terrainS
         vec4 variation = texture2D(uNoiseTexture, vGlobalUV * uNoiseScale);
         vec3 tipColor = mix(uTipColor1, uTipColor2, variation.r);
         vec3 color = mix(uBaseColor, tipColor, vUv.y);
-        // Day/night: dim and cool the grass at night
-        color *= mix(vec3(0.30, 0.36, 0.55), vec3(1.0), uDayFactor);
+        // Day/night: dim and cool the grass at night, keep day below full blast
+        color *= mix(vec3(0.30, 0.36, 0.55), vec3(0.82), uDayFactor);
 
         gl_FragColor = vec4(color, 1.0);
         #include <tonemapping_fragment>

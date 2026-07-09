@@ -48,6 +48,12 @@ export const ripplesFragmentColor = /* glsl */ `
     drops += dropRing(vWorldPos.xz, uDrops[i]);
   }
   drops *= smoothstep(0.35, 0.65, breakup) * 0.5;
-  diffuseColor.rgb = vec3(1.0);
   diffuseColor.a = clamp(band + drops, 0.0, 1.0) * 0.55 * waterMask;
+`;
+
+// Fragment <emissivemap_fragment> block: the rings glow white on their own,
+// so a low sun can't gray them out (the plane is a lit material otherwise)
+export const ripplesFragmentEmissive = /* glsl */ `
+  #include <emissivemap_fragment>
+  totalEmissiveRadiance += vec3(1.0);
 `;
