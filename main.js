@@ -498,7 +498,12 @@ scene.add(grass);
 
 // --- Fluffy trees (douges.dev "Building fluffy trees"): dark trunk +
 // alpha-cutout quads inflated in view space by the foliage shader ---
-const foliageAlphaTexture = textureLoader.load('./textures/foliage_alpha.png');
+// Once the image arrives, the falling leaves carve their individual
+// silhouettes from it (see assignLeafWindows below)
+const foliageAlphaTexture = textureLoader.load(
+  './textures/foliage_alpha.png',
+  (texture) => assignLeafWindows(texture)
+);
 const { material: foliageMaterial, uniforms: foliageUniforms } = createFoliageMaterial({
   alphaTexture: foliageAlphaTexture,
   noiseTexture: perlinTexture,
@@ -802,15 +807,99 @@ const sunColor = new THREE.Color();
 const foliageTint = new THREE.Color();
 const tintScratch = new THREE.Color();
 
-// --- Falling leaves: small quads fluttering down from the crowns ---
+// --- Falling leaves: small quads fluttering down from the crowns. Each
+// instance is cut into its own leaflet: a per-instance UV window into the
+// foliage alpha texture (the same texture that shapes the crown puffs), so
+// every falling leaf has a different silhouette. ---
 const LEAF_COUNT = 45;
+const LEAF_UV_SCALE = 0.3; // window size within the texture (0-1)
 const leafColor1 = new THREE.Color('#8fe8d8');
 const leafColor2 = new THREE.Color('#05a3af');
-const leaves = new THREE.InstancedMesh(
-  new THREE.PlaneGeometry(0.11, 0.08),
-  new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }),
-  LEAF_COUNT
-);
+const leafUvOffsets = new THREE.InstancedBufferAttribute(new Float32Array(LEAF_COUNT * 2), 2);
+const leafGeometry = new THREE.PlaneGeometry(0.16, 0.16);
+leafGeometry.setAttribute('aUvOffset', leafUvOffsets);
+const leafMaterial = new THREE.MeshBasicMaterial({
+  side: THREE.DoubleSide,
+  alphaMap: foliageAlphaTexture,
+  alphaTest: 0.4,
+});
+leafMaterial.onBeforeCompile = (shader) => {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', `#include <common>
+  attribute vec2 aUvOffset;
+  varying vec2 vLeafUv;`)
+    .replace('#include <uv_vertex>', `#include <uv_vertex>
+  vLeafUv = uv * ${LEAF_UV_SCALE} + aUvOffset;`);
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', `#include <common>
+  varying vec2 vLeafUv;`)
+    .replace(
+      '#include <alphamap_fragment>',
+      // The radial mask fades out anything touching the quad edge, so a
+      // window that clips its leaflet can never show a straight square rim
+      `diffuseColor.a *= texture2D( alphaMap, vLeafUv ).g
+    * smoothstep(0.52, 0.34, length(fract(vAlphaMapUv) - 0.5));`
+    );
+};
+const leaves = new THREE.InstancedMesh(leafGeometry, leafMaterial, LEAF_COUNT);
+
+// Pick each leaf's window from the alpha texture's actual pixels. A window
+// only qualifies if its border ring is (nearly) empty — the leaflet must sit
+// wholly inside it, otherwise the quad edge slices the shape into a square.
+// First qualifying window wins, so every leaf lands on a different leaflet.
+// Runs once the texture image arrives (the loading screen covers the wait).
+function assignLeafWindows(texture) {
+  const image = texture.image;
+  const GRID = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = GRID;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(image, 0, 0, GRID, GRID);
+  const pixels = ctx.getImageData(0, 0, GRID, GRID).data;
+  const windowRand = mulberry32(11);
+  const span = Math.floor(GRID * LEAF_UV_SCALE);
+  for (let i = 0; i < LEAF_COUNT; i++) {
+    let ox = (1 - LEAF_UV_SCALE) / 2;
+    let oy = ox;
+    let bestScore = Infinity;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const tryX = windowRand() * (1 - LEAF_UV_SCALE);
+      const tryY = windowRand() * (1 - LEAF_UV_SCALE);
+      // UV origin is bottom-left, ImageData's is top-left: flip the row
+      const px = Math.floor(tryX * GRID);
+      const py = Math.floor((1 - tryY - LEAF_UV_SCALE) * GRID);
+      let sum = 0;
+      let border = 0;
+      let borderCount = 0;
+      for (let y = 0; y < span; y++) {
+        for (let x = 0; x < span; x++) {
+          const v = pixels[((py + y) * GRID + px + x) * 4];
+          sum += v;
+          if (y === 0 || x === 0 || y === span - 1 || x === span - 1) {
+            border += v;
+            borderCount++;
+          }
+        }
+      }
+      const coverage = sum / (span * span * 255);
+      const borderCoverage = border / (borderCount * 255);
+      if (coverage < 0.12 || coverage > 0.6) continue;
+      if (borderCoverage < 0.06) {
+        ox = tryX;
+        oy = tryY;
+        break;
+      }
+      // Remember the cleanest near-miss in case no window fully qualifies
+      if (borderCoverage < bestScore) {
+        bestScore = borderCoverage;
+        ox = tryX;
+        oy = tryY;
+      }
+    }
+    leafUvOffsets.setXY(i, ox, oy);
+  }
+  leafUvOffsets.needsUpdate = true;
+}
 leaves.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(LEAF_COUNT * 3), 3);
 scene.add(leaves);
 
@@ -868,6 +957,10 @@ function updateLeaves(t, dt) {
       t * leaf.spin * 0.4 + leaf.phase,
       Math.sin(t * leaf.sway + leaf.phase) * 0.8
     );
+    // Fade out by shrinking over the last stretch of the fall, so leaves
+    // melt into the grass instead of popping away at the respawn line
+    const fade = THREE.MathUtils.smoothstep(leaf.y, 0.03, 0.65);
+    leafDummy.scale.setScalar(fade);
     leafDummy.updateMatrix();
     leaves.setMatrixAt(i, leafDummy.matrix);
   }
@@ -1224,6 +1317,39 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+// --- Loading screen: fade out once every queued asset has settled (the
+// default manager also counts failed loads like the optional bird GLB) and
+// the first frame is actually on screen; a timeout covers the edge case of a
+// loader that never reports back, so the scene is never stuck hidden ---
+const loadingScreen = document.getElementById('loading-screen');
+const loadingBarFill = document.getElementById('loading-bar-fill');
+let assetsReady = false;
+let firstFrameRendered = false;
+function maybeFinishLoading() {
+  if (!assetsReady || !firstFrameRendered || !loadingScreen) return;
+  loadingScreen.classList.add('done');
+  loadingScreen.addEventListener('transitionend', () => loadingScreen.remove(), { once: true });
+}
+// The CSS creep covers the module-download phase (0-30%); real asset
+// progress fills the rest of the bar from there
+THREE.DefaultLoadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
+  if (!loadingBarFill) return;
+  loadingBarFill.style.animation = 'none';
+  loadingBarFill.style.width = `${30 + (itemsLoaded / itemsTotal) * 70}%`;
+};
+THREE.DefaultLoadingManager.onLoad = () => {
+  if (loadingBarFill) {
+    loadingBarFill.style.animation = 'none';
+    loadingBarFill.style.width = '100%';
+  }
+  assetsReady = true;
+  maybeFinishLoading();
+};
+setTimeout(() => {
+  assetsReady = true;
+  maybeFinishLoading();
+}, 8000);
+
 let lastTime = 0;
 renderer.setAnimationLoop(() => {
   const elapsed = clock.getElapsedTime();
@@ -1239,4 +1365,8 @@ renderer.setAnimationLoop(() => {
   updateZoomDamping();
   controls.update();
   renderer.render(scene, camera);
+  if (!firstFrameRendered) {
+    firstFrameRendered = true;
+    maybeFinishLoading();
+  }
 });

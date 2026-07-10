@@ -111,6 +111,52 @@
       cursor: default;
     }
     #live-button.active::before { color: #6fe7a8; }
+    /* Loading screen: covers the page until main.js reports the scene ready
+       (assets settled + first frame rendered), then fades out and is removed */
+    #loading-screen {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: #0a101c; /* matches theme-color so the tab bar blends in */
+      z-index: 100;
+      transition: opacity 0.6s ease;
+    }
+    #loading-screen.done {
+      opacity: 0;
+      pointer-events: none;
+    }
+    #loading-bar {
+      width: min(220px, 60vw);
+      height: 3px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      overflow: hidden;
+    }
+    #loading-bar-fill {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: #4fc3ad; /* same teal as the dial handle */
+      transition: width 0.3s ease;
+      /* Creep forward while the three.js module itself downloads — the JS
+         loading manager can't see that phase; main.js cancels this animation
+         on its first real progress report */
+      animation: loading-creep 5s ease-out forwards;
+    }
+    @keyframes loading-creep {
+      to { width: 30%; }
+    }
+    #loading-label {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 0.62rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.55);
+    }
   </style>
   <script type="importmap">
     {
@@ -122,6 +168,10 @@
   </script>
 </head>
 <body>
+  <div id="loading-screen">
+    <div id="loading-bar"><div id="loading-bar-fill"></div></div>
+    <div id="loading-label">loading</div>
+  </div>
   <div id="time-panel">
     <div id="date"></div>
     <div id="clock"></div>
