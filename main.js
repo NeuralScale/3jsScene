@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createFluffyGrassMaterial } from './shaders/grassMaterial.js';
 import { createFoliageMaterial } from './shaders/foliageMaterial.js';
 import { vertexCommon, vertexBegin, noiseGLSL, pondDepth } from './shaders/common.glsl.js';
@@ -607,14 +608,17 @@ function createTree(treeScale, seed) {
 }
 
 // Fixed spots, precomputed against the JS pondDepth twin so every trunk and
-// its 1-unit crown overhang sit on dry grass, spaced >= 2.6 apart
+// its 1-unit crown overhang sit on dry grass, spaced >= 2.6 apart. Spread
+// around the full ring, but leaving the arc the default camera looks
+// through (~20-90° azimuth) open so the pond is unobstructed at load; also
+// kept >= 1.8 away from the watercolor bird's spot at (-4.2, -3.9).
 const TREE_SPOTS = [
-  { x: 5.3, z: 0, scale: 1.15 },
-  { x: 4.59, z: 2.65, scale: 0.85 },
-  { x: 2.34, z: 4.75, scale: 1.3 },
-  { x: -0.35, z: 5.29, scale: 0.9 },
-  { x: -3.75, z: 3.75, scale: 1.2 },
-  { x: 2.34, z: -4.75, scale: 1.0 },
+  { x: -0.97, z: 5.51, scale: 1.15 },
+  { x: -4.83, z: 3.02, scale: 0.9 },
+  { x: -5.41, z: -1.25, scale: 1.25 },
+  { x: -2.0, z: -5.5, scale: 1.0 },
+  { x: 2.02, z: -5.27, scale: 1.3 },
+  { x: 5.42, z: -0.96, scale: 0.85 },
 ];
 const treeCrowns = []; // world-space crown centers + radii, for leaf spawning
 const hoverTargets = []; // ground + crown proxies, filled below
@@ -630,6 +634,36 @@ hoverTargets.push(ground);
 
 // Foliage shares the grass's eased pointer so crowns and blades bend together
 foliageUniforms.uPointer.value = grassUniforms.uPointer.value;
+
+// --- Watercolor bird ("Watercolor bird" by peachyroyalty on Sketchfab,
+// CC BY-NC — see SOURCES.md), perched on the grass facing the pond.
+// Sketchfab downloads need a login, so the GLB ships separately: drop it at
+// ./models/watercolor_bird.glb (see models/README.md). A missing file just
+// logs a hint and the scene carries on without the bird. ---
+const BIRD_SPOT = { x: -4.2, z: -3.9 }; // dry grass, clear of pond wobble and trees
+new GLTFLoader().load(
+  './models/watercolor_bird.glb',
+  (gltf) => {
+    const bird = gltf.scene;
+    bird.rotation.y = Math.atan2(-BIRD_SPOT.x, -BIRD_SPOT.z); // face the pond
+    // Exports come in arbitrary units: normalize to ~1.1 units tall, then
+    // center it over the spot with its feet exactly on the ground plane
+    const box = new THREE.Box3().setFromObject(bird);
+    const size = box.getSize(new THREE.Vector3());
+    bird.scale.setScalar(1.1 / Math.max(size.y, 1e-6));
+    box.setFromObject(bird);
+    const center = box.getCenter(new THREE.Vector3());
+    bird.position.x += BIRD_SPOT.x - center.x;
+    bird.position.z += BIRD_SPOT.z - center.z;
+    bird.position.y -= box.min.y;
+    scene.add(bird);
+  },
+  undefined,
+  () => console.warn(
+    'Watercolor bird GLB not found — download it from Sketchfab (login required) ' +
+    'and save it as models/watercolor_bird.glb (see models/README.md)'
+  )
+);
 
 // --- Sky: gradient dome, timeline driven. Three vertical stops (horizon,
 // mid-band, zenith) plus an azimuthal glow so the horizon isn't one flat

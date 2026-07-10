@@ -26,6 +26,14 @@
   - `textures/foliage_alpha.png` — foliage alpha map from the article
     (`douges.dev/static/foliage_alpha3.png`).
 
+## Bird
+
+- **["Watercolor bird"](https://sketchfab.com/3d-models/watercolor-bird-b2c20729dd4a4a89b3ee7cf90a795e46)**
+  by [peachyroyalty](https://sketchfab.com/peachyroyalty) (CC Attribution-NonCommercial) —
+  GLB perched on the island grass. Downloaded manually from Sketchfab (login
+  required) to `models/watercolor_bird.glb`; loaded in `main.js` via `GLTFLoader`.
+  NonCommercial: this project must stay non-commercial while the bird is included.
+
 ## Ripples
 
 - Click-spawned water drops in `shaders/ripples.glsl.js` are inspired by the
